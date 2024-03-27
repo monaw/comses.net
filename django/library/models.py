@@ -2781,6 +2781,11 @@ class DataCiteMetadata:
 
 
 class DataCiteMetadata:
+    INITIAL_DATA = {
+        "publisher": "CoMSES Net https://www.comses.net/codebases",
+        "types": {"resourceType": "Model", "resourceTypeGeneral": "Software"},
+    }
+
     def __init__(self, metadata: dict):
         if not metadata:
             raise ValueError(
@@ -2804,37 +2809,75 @@ class DataCiteMetadata:
         We don't want to make a copy since some field names are different and also
         some fields DataCite do not want or have.
         """
-        metadata = {}
-        codemeta = release.codemeta.metadata
+        #metadata = {}
+        metadata = cls.INITIAL_DATA.copy()
+        codebase = release.codebase
+        #codemeta = release.codemeta.metadata
         metadata.update(
-            creators=cls.convert_authors(codemeta),
+            #creators=cls.convert_authors(codemeta),
+            creators=cls.convert_authors(release),
+            #descriptions=[
+            #    {"description": codemeta["description"], "descriptionType": "Abstract"}
+            #],
             descriptions=[
-                {"description": codemeta["description"], "descriptionType": "Abstract"}
+                {"description": codebase.description.raw, "descriptionType": "Abstract"}
             ],
             identifiers=[
-                {"identifier": codemeta["identifier"], "identifierType": "DOI"}
+                {"identifier": release.permanent_url, "identifierType": "DOI"}
             ],
-            publicationYear=cls.convert_publication_year(codemeta, release),
-            publisher=codemeta["publisher"]["name"]
-            + " "
-            + codemeta["publisher"]["url"],
-            types={"resourceType": "Model", "resourceTypeGeneral": "Software"},
-            titles=[{"title": codemeta["name"]}],
-            version=codemeta["version"],
+            #publicationYear=cls.convert_publication_year(codemeta, release),
+            #publisher=codemeta["publisher"]["name"]
+            #+ " "
+            #+ codemeta["publisher"]["url"],
+            #titles=[{"title": codemeta["name"]}],
+            titles=[{"title": codebase.title}],
+            #version=codemeta["version"],
+            version=release.version_number,
         )
 
+        if release.first_published_at:
+            metadata.update(publicationYear=release.first_published_at.year)
+
+        """
         if "codeRepository" in codemeta:
             metadata.update(
                 contributors=cls.convert_contributors(
                     codemeta["codeRepository"], release
                 )
             )
+        """
+        if codebase.repository_url:
+            metadata.update(
+                contributors=cls.convert_contributors(
+                    codebase.repository_url, release
+                )
+            )
+
+        """
         if "keywords" in codemeta:
             metadata.update(subjects=cls.convert_keywords(codemeta))
+        """
+        if release.codebase.tags:
+            metadata.update(subjects=[tag.name for tag in release.codebase.tags.all()])
+
+        """
         if "releaseNotes" in codemeta:
             metadata["descriptions"].append(cls.convert_release_notes(codemeta))
+        """
+        if release.release_notes:
+            metadata["descriptions"].append({
+                "description": release.release_notes.raw,
+                "descriptionType": "TechnicalInfo",
+            })
+        
         if release.license:
-            metadata.update(rightsList=cls.convert_license(release))
+            #metadata.update(rightsList=cls.convert_license(release))
+            license = release.license
+            metadata.update(rightsList=[{
+                "rights": license.name,
+                "rightsIdentifier": license.name,
+                "rightsURI": license.url,
+            }])
 
         """
         Now we will handle the nested parent/child DOI part.
@@ -2858,6 +2901,7 @@ class DataCiteMetadata:
         """
         return DataCiteMetadata(metadata)
 
+    """
     @classmethod
     def convert_authors(cls, codemeta):
         creators = []
@@ -2876,9 +2920,31 @@ class DataCiteMetadata:
                 item["affiliation"] = [author["affiliation"]]
             creators.append(item)
         return creators
+    """
 
     @classmethod
-    def convert_contributors(cls, code_repo, codebase_release):
+    def convert_authors(cls, release):
+        creators = []
+        for author in ReleaseContributor.objects.authors(release):
+            print ("author: " + str(author))
+            """
+            author_type = "Organizational"
+            if author["@type"] == "Person":
+                author_type = "Personal"
+            item = {
+                "name": author["familyName"] + ", " + author["givenName"],
+                "givenName": author["givenName"],
+                "familyName": author["familyName"],
+                "nameType": author_type,
+            }
+            if "affiliation" in author:
+                item["affiliation"] = [author["affiliation"]]
+            creators.append(item)
+            """
+        return creators
+
+    @classmethod
+    def convert_contributors(cls, code_repo, release):
         """
         For DataCite purpose, contributors do not include authors.
         Our contributor categories are: collaborator, contributor, copyrightHolder,
@@ -2892,7 +2958,7 @@ class DataCiteMetadata:
                 "contributorType": "hostingInstitution",
             }
         ]
-        nonauthors = ReleaseContributor.objects.nonauthors(codebase_release)
+        nonauthors = ReleaseContributor.objects.nonauthors(release)
         for contributor in nonauthors:
             already_has_other_role = False
             for role in contributor.roles:
@@ -2942,6 +3008,7 @@ class DataCiteMetadata:
                     already_has_other_role = True
         return contributors
 
+    """
     @classmethod
     def convert_keywords(cls, codemeta):
         subjects = []
@@ -2975,7 +3042,7 @@ class DataCiteMetadata:
             "description": codemeta["releaseNotes"],
             "descriptionType": "TechnicalInfo",
         }
-
+    """
 
 @register_snippet
 class PeerReviewEventLog(models.Model):
