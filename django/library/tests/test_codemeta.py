@@ -1,26 +1,16 @@
-import json
-import string
+from django.contrib.auth.models import User
 from hypothesis.extra.django import (
     TestCase,
     TransactionTestCase,
     from_model,
-    register_field_strategy,
 )
-
 from hypothesis.stateful import (
     RuleBasedStateMachine,
     initialize,
     invariant,
     rule,
-    multiple,
-    consumes,
     Bundle,
 )
-
-from django.contrib.auth.models import User
-import jsonschema
-from library.tests.base import CodebaseFactory
-from library.models import CodeMeta, Contributor, ReleaseContributor, Role
 
 from typing import List, Tuple
 from hypothesis import (
@@ -28,19 +18,25 @@ from hypothesis import (
     Verbosity,
     given,
     settings,
-    example,
     strategies as st,
 )
 
-from hypothesis.strategies import data
-
+import json
+import jsonschema
+import string
 import logging
 
-st.dictionaries
-from hypothesis import settings, Verbosity
-
 from core.tests.base import UserFactory
-from library.models import Codebase, CodebaseRelease
+from library.models import (
+    Codebase,
+    CodebaseRelease,
+    CodeMetaMetadata,
+    Contributor,
+    ReleaseContributor,
+    Role,
+)
+from .base import CodebaseFactory
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
@@ -366,7 +362,7 @@ class CodeMetaTest(TestCase):
             jsonschema.validate(release.codemeta.to_json(), schema=CODEMETA_SCHEMA)
             logger.debug("codemeta.json is valid.")
         except Exception as e:
-            logger.error("codemeta.json is invalid! Validation error: {e}")
+            logger.error("codemeta.json is invalid! Validation error:", e)
             self.fail(f"Validation error: {e}")
 
         logger.debug("test_codemeta_validate() done.")
@@ -387,7 +383,7 @@ This class is used to test whether a random combination of methods that affect C
 class CodeMetaValidationTest(RuleBasedStateMachine):
     added_release_contributors = Bundle("added_release_contributors")
 
-    @initialize(data=data())
+    @initialize(data=st.data())
     def setup(self, data):
         """
         This runs before each test case
@@ -536,7 +532,7 @@ class CodeMetaValidationTest(RuleBasedStateMachine):
         )
 
         expected_codemeta_authors_count = len(
-            CodeMeta.convert_authors(self.codebase_release)
+            CodeMetaMetadata.convert_authors(self.codebase_release.common_metadata)
         )
         assert expected_codemeta_authors_count == self.release_author_contributors_count
 
@@ -565,9 +561,7 @@ class CodeMetaValidationTest(RuleBasedStateMachine):
         # Extract text from CodeMeta.metadata
         codemeta_citation_flat_text = [
             creative_work["text"]
-            for creative_work in CodeMeta.build(self.codebase_release).metadata[
-                "citation"
-            ]
+            for creative_work in self.codebase_release.codemeta.metadata["citation"]
         ]
 
         assert expected_citation == codemeta_citation_flat_text
@@ -577,21 +571,18 @@ class CodeMetaValidationTest(RuleBasedStateMachine):
     @invariant()
     def validate_against_schema(self):
         """
-        CodeMeta.build(release).to_json() should ALWAYS validate against CODEMETA_SCHEMA
+        release.codemeta.to_json() should ALWAYS validate against CODEMETA_SCHEMA
         """
         logger.debug("validate_against_schema()")
         try:
             jsonschema.validate(
-                json.loads(CodeMeta.build(self.codebase_release).to_json()),
+                json.loads(self.codebase_release.codemeta.to_json()),
                 schema=CODEMETA_SCHEMA,
             )
-
-            logger.debug("codemeta.json is valid.")
             assert True, "codemeta.json is valid."
-
         except Exception as e:
-            logger.error("codemeta.json is invalid! {e}")
-            assert False, "CodeMeta validation error: {e}"
+            logger.error("codemeta json was invalid ", e)
+            assert False, f"CodeMeta validation error: {e}"
 
         logger.debug("validate_against_schema() done.")
 
@@ -610,9 +601,10 @@ class CodeMetaValidationTest(RuleBasedStateMachine):
                 Codebase.objects.filter(id=self.codebase.id).delete()
                 # Delete Submitter
                 User.objects.filter(id=self.submitter.id).delete()
-                # Delete Contributor objects
-                for user in self.users:
-                    User.objects.filter(username=user.username).delete()
+                # Delete generated Contributor objects
+                User.objects.filter(id__in=[user.id for user in self.users]).delete()
+                # for user in self.users:
+                #     User.objects.filter(username=user.username).delete()
             except Exception as err:
                 logger.error(f"Exception during teardown: {err}")
 
