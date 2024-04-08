@@ -2848,9 +2848,7 @@ class DataCiteMetadata:
         """
         if codebase.repository_url:
             metadata.update(
-                contributors=cls.convert_contributors(
-                    codebase.repository_url, release
-                )
+                contributors=cls.convert_contributors(codebase.repository_url, release)
             )
 
         """
@@ -2869,7 +2867,7 @@ class DataCiteMetadata:
                 "description": release.release_notes.raw,
                 "descriptionType": "TechnicalInfo",
             })
-        
+
         if release.license:
             #metadata.update(rightsList=cls.convert_license(release))
             license = release.license
@@ -2926,7 +2924,7 @@ class DataCiteMetadata:
     def convert_authors(cls, release):
         creators = []
         for author in ReleaseContributor.objects.authors(release):
-            print ("author: " + str(author))
+            print("author: " + str(author))
             """
             author_type = "Organizational"
             if author["@type"] == "Person":
@@ -3043,6 +3041,11 @@ class DataCiteMetadata:
             "descriptionType": "TechnicalInfo",
         }
     """
+
+    def to_json(self):
+        """Returns a JSON string of this datacite data"""
+        return json.dumps(self.metadata)
+
 
 @register_snippet
 class PeerReviewEventLog(models.Model):
