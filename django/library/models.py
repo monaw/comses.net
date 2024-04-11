@@ -1524,10 +1524,6 @@ class CodebaseRelease(index.Indexed, ClusterableModel):
     def datacite(self):
         return DataCiteMetadata.build(self.common_metadata)
 
-    @cached_property
-    def datacite_metadata(self):
-        return DataCiteMetadata.build(self)
-
     @property
     def is_draft(self):
         return self.status == self.Status.DRAFT
@@ -1569,6 +1565,10 @@ class CodebaseRelease(index.Indexed, ClusterableModel):
     @property
     def codemeta_json(self):
         return self.codemeta.to_json()
+    
+    @property
+    def datacite_json(self):
+        return self.datacite_metadata.to_json()
 
     def create_or_update_codemeta(self, force=True):
         return self.get_fs_api().create_or_update_codemeta(force=force)
@@ -1715,15 +1715,6 @@ class ReleaseContributorQuerySet(models.QuerySet):
             .exclude(roles__contains="{author}")
             .order_by("index")
         )
-
-    def nonauthors(self, release):
-        qs = (
-            self.select_related("contributor")
-            .filter(release=release, include_in_citation=True)
-            .exclude(roles__contains="{author}")
-        )
-        return qs.order_by("index")
-
 
 class ReleaseContributor(models.Model):
     release = models.ForeignKey(
@@ -2778,274 +2769,6 @@ class DataCiteMetadata:
 
     def to_dict(self):
         return self.metadata.copy()
-
-
-class DataCiteMetadata:
-    INITIAL_DATA = {
-        "publisher": "CoMSES Net https://www.comses.net/codebases",
-        "types": {"resourceType": "Model", "resourceTypeGeneral": "Software"},
-    }
-
-    def __init__(self, metadata: dict):
-        if not metadata:
-            raise ValueError(
-                "Initialize with a base dictionary with DataCite terms mapped to JSON-serializable values"
-            )
-        self.metadata = metadata
-
-    @classmethod
-    def build(cls, release: CodebaseRelease):
-        """
-        Build the DataCite schema 4.3 data in JSON format.
-        See documentation @ https://schema.datacite.org/meta/kernel-4.3/doc/DataCite-MetadataKernel_v4.3.pdf
-        page 7 for the require fields and page 8 for required and optional fields.
-        Also see https://support.datacite.org/reference/post_dois for current REST API field list
-        which shows a required field "type": "dois"
-        Important: this should be call AFTER the release has been published as DataCite
-        requires the copyrightYear information
-
-        See https://codemeta.github.io/crosswalk/datacite/ for documentation on CodeMeta to DataCite crosswalk.
-
-        We don't want to make a copy since some field names are different and also
-        some fields DataCite do not want or have.
-        """
-        #metadata = {}
-        metadata = cls.INITIAL_DATA.copy()
-        codebase = release.codebase
-        #codemeta = release.codemeta.metadata
-        metadata.update(
-            #creators=cls.convert_authors(codemeta),
-            creators=cls.convert_authors(release),
-            #descriptions=[
-            #    {"description": codemeta["description"], "descriptionType": "Abstract"}
-            #],
-            descriptions=[
-                {"description": codebase.description.raw, "descriptionType": "Abstract"}
-            ],
-            identifiers=[
-                {"identifier": release.permanent_url, "identifierType": "DOI"}
-            ],
-            #publicationYear=cls.convert_publication_year(codemeta, release),
-            #publisher=codemeta["publisher"]["name"]
-            #+ " "
-            #+ codemeta["publisher"]["url"],
-            #titles=[{"title": codemeta["name"]}],
-            titles=[{"title": codebase.title}],
-            #version=codemeta["version"],
-            version=release.version_number,
-        )
-
-        if release.first_published_at:
-            metadata.update(publicationYear=release.first_published_at.year)
-
-        """
-        if "codeRepository" in codemeta:
-            metadata.update(
-                contributors=cls.convert_contributors(
-                    codemeta["codeRepository"], release
-                )
-            )
-        """
-        if codebase.repository_url:
-            metadata.update(
-                contributors=cls.convert_contributors(codebase.repository_url, release)
-            )
-
-        """
-        if "keywords" in codemeta:
-            metadata.update(subjects=cls.convert_keywords(codemeta))
-        """
-        if release.codebase.tags:
-            metadata.update(subjects=[tag.name for tag in release.codebase.tags.all()])
-
-        """
-        if "releaseNotes" in codemeta:
-            metadata["descriptions"].append(cls.convert_release_notes(codemeta))
-        """
-        if release.release_notes:
-            metadata["descriptions"].append({
-                "description": release.release_notes.raw,
-                "descriptionType": "TechnicalInfo",
-            })
-
-        if release.license:
-            #metadata.update(rightsList=cls.convert_license(release))
-            license = release.license
-            metadata.update(rightsList=[{
-                "rights": license.name,
-                "rightsIdentifier": license.name,
-                "rightsURI": license.url,
-            }])
-
-        """
-        Now we will handle the nested parent/child DOI part.
-        DataCite documentation @ https://support.datacite.org/docs/versioning
-        Here's an example of how Zenodo does this relationship in metadata:
-            parent @ https://api.datacite.org/dois/10.5281/zenodo.705645
-            v1 @ https://api.datacite.org/dois/10.5281/zenodo.60943
-            v2 @ https://api.datacite.org/dois/10.5281/zenodo.800648
-        Zenodo's documentation @ https://help.zenodo.org/faq/#versioning
-        """
-        """
-        parent = release.codebase
-        parent_doi = parent.get_absolute_url()
-        releases = parent.ordered_releases()
-
-        # If there are 2 releases, then we need to create a parent DOI but should this be done elsewhere since it requires a call to DataCite's Fabrica API?
-        #if releases.count() == 2:
-            # do something
-        #elif releases.count() > 2:
-            # do something
-        """
-        return DataCiteMetadata(metadata)
-
-    """
-    @classmethod
-    def convert_authors(cls, codemeta):
-        creators = []
-        for author in codemeta["author"]:
-            # print ("author: " + str(author))
-            author_type = "Organizational"
-            if author["@type"] == "Person":
-                author_type = "Personal"
-            item = {
-                "name": author["familyName"] + ", " + author["givenName"],
-                "givenName": author["givenName"],
-                "familyName": author["familyName"],
-                "nameType": author_type,
-            }
-            if "affiliation" in author:
-                item["affiliation"] = [author["affiliation"]]
-            creators.append(item)
-        return creators
-    """
-
-    @classmethod
-    def convert_authors(cls, release):
-        creators = []
-        for author in ReleaseContributor.objects.authors(release):
-            print("author: " + str(author))
-            """
-            author_type = "Organizational"
-            if author["@type"] == "Person":
-                author_type = "Personal"
-            item = {
-                "name": author["familyName"] + ", " + author["givenName"],
-                "givenName": author["givenName"],
-                "familyName": author["familyName"],
-                "nameType": author_type,
-            }
-            if "affiliation" in author:
-                item["affiliation"] = [author["affiliation"]]
-            creators.append(item)
-            """
-        return creators
-
-    @classmethod
-    def convert_contributors(cls, code_repo, release):
-        """
-        For DataCite purpose, contributors do not include authors.
-        Our contributor categories are: collaborator, contributor, copyrightHolder,
-        editor, funder, maintainer, pointOfContact, publisher, resourceProvider
-        For DataCite's contributor categories, see
-        https://schema.datacite.org/meta/kernel-4.3/doc/DataCite-MetadataKernel_v4.3.pdf page 13)
-        """
-        contributors = [
-            {
-                "contributorName": code_repo,
-                "contributorType": "hostingInstitution",
-            }
-        ]
-        nonauthors = ReleaseContributor.objects.nonauthors(release)
-        for contributor in nonauthors:
-            already_has_other_role = False
-            for role in contributor.roles:
-                if role == "copyrightHolder":
-                    contributors.append(
-                        {
-                            "contributorName:": contributor.contributor.name,
-                            "contributorType:": "RightsHolder",
-                        }
-                    )
-                elif role == "editor":
-                    contributors.append(
-                        {
-                            "contributorName:": contributor.contributor.name,
-                            "contributorType:": "Editor",
-                        }
-                    )
-                elif role == "funder":
-                    contributors.append(
-                        {
-                            "contributorName:": contributor.contributor.name,
-                            "contributorType:": "Sponsor",
-                        }
-                    )
-                elif role == "pointOfContact":
-                    contributors.append(
-                        {
-                            "contributorName:": contributor.contributor.name,
-                            "contributorType:": "ContactPerson",
-                        }
-                    )
-                elif role == "resourceProvider":
-                    contributors.append(
-                        {
-                            "contributorName:": contributor.contributor.name,
-                            "contributorType:": "Distributor",
-                        }
-                    )
-                # collaborator, contributor, maintainer, publisher and any other new roles will be mapped to other role
-                elif already_has_other_role == False:
-                    contributors.append(
-                        {
-                            "contributorName:": contributor.contributor.name,
-                            "contributorType:": "Other",
-                        }
-                    )
-                    already_has_other_role = True
-        return contributors
-
-    """
-    @classmethod
-    def convert_keywords(cls, codemeta):
-        subjects = []
-        for keyword in codemeta["keywords"]:
-            subjects.append(keyword)
-        return subjects
-
-    @classmethod
-    def convert_license(cls, release):
-        # the license in codemeta combines the name & url so instead will use the
-        # release license object (should be the same)
-        license = release.license
-        return [
-            {
-                "rights": license.name,
-                "rightsIdentifier": license.name,
-                "rightsURI": license.url,
-            }
-        ]
-
-    @classmethod
-    def convert_publication_year(cls, codemeta, codebase_release):
-        if "copyrightYear" in codemeta:
-            return codemeta["copyrightYear"]
-        elif codebase_release.first_published_at:
-            return codebase_release.first_published_at.year
-
-    @classmethod
-    def convert_release_notes(cls, codemeta):
-        return {
-            "description": codemeta["releaseNotes"],
-            "descriptionType": "TechnicalInfo",
-        }
-    """
-
-    def to_json(self):
-        """Returns a JSON string of this datacite data"""
-        return json.dumps(self.metadata)
-
 
 @register_snippet
 class PeerReviewEventLog(models.Model):
